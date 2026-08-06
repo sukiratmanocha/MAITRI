@@ -1,0 +1,132 @@
+.stat-card {
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    padding: 22px;
+    display: flex;
+    align-items: flex-start;
+    gap: 16px;
+    transition: all var(--transition-base);
+    position: relative;
+    overflow: hidden;
+    box-shadow: var(--shadow-sm);
+}
+
+.stat-card::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 3px;
+    opacity: 0;
+    transition: opacity var(--transition-fast);
+}
+
+.stat-card:hover {
+    transform: translateY(-2px);
+    border-color: #cbd5e1;
+    box-shadow: var(--shadow-md);
+}
+
+.stat-card:hover::before {
+    opacity: 1;
+}
+
+/* Color variants */
+.stat-card--green::before {
+    background: linear-gradient(90deg, var(--primary), var(--primary-light));
+}
+
+.stat-card--blue::before {
+    background: linear-gradient(90deg, var(--accent), var(--accent-light));
+}
+
+.stat-card--orange::before {
+    background: linear-gradient(90deg, #d97706, #f59e0b);
+}
+
+.stat-card--purple::before {
+    background: linear-gradient(90deg, var(--secondary), #818cf8);
+}
+
+.stat-icon-wrap {
+    width: 48px;
+    height: 48px;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+}
+
+.stat-card--green .stat-icon-wrap {
+    background: var(--primary-bg);
+}
+
+.stat-card--blue .stat-icon-wrap {
+    background: var(--accent-bg);
+}
+
+.stat-card--orange .stat-icon-wrap {
+    background: var(--status-warning-bg);
+}
+
+.stat-card--purple .stat-icon-wrap {
+    background: var(--secondary-bg);
+}
+
+.stat-icon {
+    font-size: 22px;
+}
+
+.stat-body {
+    flex: 1;
+    min-width: 0;
+}
+
+.stat-label {
+    font-size: 12px;
+    color: var(--text-muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    margin-bottom: 4px;
+}
+
+.stat-value {
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--text-primary);
+    line-height: 1.1;
+    margin-bottom: 6px;
+}
+
+.stat-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.stat-sub {
+    font-size: 11.5px;
+    color: var(--text-muted);
+}
+
+.stat-trend {
+    font-size: 11.5px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+}
+
+.stat-trend.up {
+    color: var(--status-success);
+    background: var(--status-success-bg);
+}
+
+.stat-trend.down {
+    color: var(--status-danger);
+    background: var(--status-danger-bg);
+}

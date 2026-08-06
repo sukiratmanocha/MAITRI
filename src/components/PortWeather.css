@@ -1,0 +1,96 @@
+.port-weather-strip {
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    background: #ffffff;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 20px;
+    margin-bottom: 24px;
+    overflow-x: auto;
+    flex-wrap: wrap;
+    box-shadow: var(--shadow-sm);
+}
+
+.weather-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.weather-ports {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+}
+
+.weather-port {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #f8fafc;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 7px 12px;
+    font-size: 13px;
+    white-space: nowrap;
+    transition: all 0.2s;
+}
+
+.weather-port:hover {
+    border-color: var(--primary);
+    background: #ffffff;
+}
+
+.weather-port.skeleton {
+    width: 160px;
+    height: 36px;
+    animation: shimmer 1.4s infinite linear;
+    background: linear-gradient(90deg, #e2e8f0 0%, #f8fafc 50%, #e2e8f0 100%);
+    background-size: 200% 100%;
+}
+
+@keyframes shimmer {
+    0% {
+        background-position: 200% 0;
+    }
+
+    100% {
+        background-position: -200% 0;
+    }
+}
+
+.weather-port-flag {
+    font-size: 14px;
+}
+
+.weather-port-name {
+    font-weight: 600;
+    color: var(--text-primary);
+    font-size: 12px;
+}
+
+.weather-condition {
+    font-size: 14px;
+}
+
+.weather-temp {
+    color: var(--accent);
+    font-weight: 700;
+    font-size: 13px;
+}
+
+.weather-wind {
+    color: var(--text-secondary);
+    font-size: 12px;
+}
+
+.weather-wind-label {
+    color: var(--text-muted);
+    font-size: 11px;
+}
