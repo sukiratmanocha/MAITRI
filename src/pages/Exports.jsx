@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback } from 'react';
-import { exports as seedExports } from '../data/shipments';
 import { vessels } from '../data/vessels';
 import { countries } from '../data/ports';
 import { addExport, getUserExports, subscribe } from '../data/tradeStore';
@@ -33,16 +32,32 @@ export default function Exports() {
     const [form, setForm] = useState({ ...emptyForm });
     const [errors, setErrors] = useState({});
     const [success, setSuccess] = useState(null);
-    const [userExports, setUserExports] = useState(() => getUserExports());
+    const [allExports, setAllExports] = useState([]);
+    const [loading, setLoading] = useState(true);
+    const [submitting, setSubmitting] = useState(false);
 
-    // Subscribe to store changes
-    useEffect(() => {
-        const unsub = subscribe(() => setUserExports(getUserExports()));
-        return unsub;
+    // Fetch all exports from the API
+    const fetchExports = useCallback(async () => {
+        try {
+            const data = await getUserExports();
+            setAllExports(data);
+        } catch (err) {
+            console.error('Failed to load exports:', err);
+        } finally {
+            setLoading(false);
+        }
     }, []);
 
-    // Merge seed data + user-submitted data
-    const allExports = [...userExports, ...seedExports];
+    // Load on mount
+    useEffect(() => {
+        fetchExports();
+    }, [fetchExports]);
+
+    // Re-fetch when tradeStore fires a change event
+    useEffect(() => {
+        const unsub = subscribe(() => fetchExports());
+        return unsub;
+    }, [fetchExports]);
 
     const filtered = allExports.filter(exp => {
         const matchesSearch = !search ||
@@ -76,19 +91,29 @@ export default function Exports() {
         return errs;
     }
 
-    function handleSubmit(e) {
+    async function handleSubmit(e) {
         e.preventDefault();
         const errs = validate();
         if (Object.keys(errs).length > 0) {
             setErrors(errs);
             return;
         }
-        const record = addExport({
-            ...form,
-            weight: form.weight ? `${form.weight} MT` : '0 MT',
-            submittedBy: user?.organization || 'Unknown',
-        });
-        setSuccess(record);
+        setSubmitting(true);
+        try {
+            const record = await addExport({
+                ...form,
+                weight: form.weight ? `${form.weight} MT` : '0 MT',
+                submittedBy: user?.organization || 'Unknown',
+            });
+            setSuccess({ id: record.shipmentId || record.id });
+            // Refresh the list
+            await fetchExports();
+        } catch (err) {
+            console.error('Failed to submit export:', err);
+            setErrors({ submit: err.message || 'Failed to submit. Please try again.' });
+        } finally {
+            setSubmitting(false);
+        }
     }
 
     function resetForm() {
@@ -158,46 +183,52 @@ export default function Exports() {
 
             <div className="dash-card" style={{ padding: 0 }}>
                 <div className="table-wrap">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Vessel</th>
-                                <th>Origin</th>
-                                <th>Destination</th>
-                                <th>Shipping Bill</th>
-                                <th>Cargo</th>
-                                <th>EGM</th>
-                                <th>Status</th>
-                                <th>Date</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-                            {filtered.map((exp) => (
-                                <tr key={exp.id} className={exp.userSubmitted ? 'user-submitted-row' : ''}>
-                                    <td className="font-mono text-accent">
-                                        {exp.id}
-                                        {exp.userSubmitted && <span className="user-badge" title="User submitted">✦</span>}
-                                    </td>
-                                    <td><strong>{exp.vessel}</strong></td>
-                                    <td>{exp.origin}</td>
-                                    <td>{exp.destination}</td>
-                                    <td className="font-mono text-muted">{exp.shippingBill}</td>
-                                    <td>{exp.cargoType}</td>
-                                    <td><StatusBadge status={exp.egmStatus} /></td>
-                                    <td><StatusBadge status={exp.status} /></td>
-                                    <td className="text-muted">{exp.date}</td>
-                                </tr>
-                            ))}
-                            {filtered.length === 0 && (
+                    {loading ? (
+                        <div style={{ textAlign: 'center', padding: '48px', color: 'var(--text-muted)' }}>
+                            Loading shipments from database…
+                        </div>
+                    ) : (
+                        <table>
+                            <thead>
                                 <tr>
-                                    <td colSpan="9" style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
-                                        No shipments found matching your criteria
-                                    </td>
+                                    <th>ID</th>
+                                    <th>Vessel</th>
+                                    <th>Origin</th>
+                                    <th>Destination</th>
+                                    <th>Shipping Bill</th>
+                                    <th>Cargo</th>
+                                    <th>EGM</th>
+                                    <th>Status</th>
+                                    <th>Date</th>
                                 </tr>
-                            )}
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                                {filtered.map((exp) => (
+                                    <tr key={exp.id} className={exp.userSubmitted ? 'user-submitted-row' : ''}>
+                                        <td className="font-mono text-accent">
+                                            {exp.id}
+                                            {exp.userSubmitted && <span className="user-badge" title="User submitted">✦</span>}
+                                        </td>
+                                        <td><strong>{exp.vessel}</strong></td>
+                                        <td>{exp.origin}</td>
+                                        <td>{exp.destination}</td>
+                                        <td className="font-mono text-muted">{exp.shippingBill}</td>
+                                        <td>{exp.cargoType}</td>
+                                        <td><StatusBadge status={exp.egmStatus} /></td>
+                                        <td><StatusBadge status={exp.status} /></td>
+                                        <td className="text-muted">{exp.date}</td>
+                                    </tr>
+                                ))}
+                                {filtered.length === 0 && (
+                                    <tr>
+                                        <td colSpan="9" style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)' }}>
+                                            No shipments found matching your criteria
+                                        </td>
+                                    </tr>
+                                )}
+                            </tbody>
+                        </table>
+                    )}
                 </div>
             </div>
 
@@ -219,6 +250,11 @@ export default function Exports() {
                     </div>
                 ) : (
                     <form className="so-form" onSubmit={handleSubmit}>
+                        {errors.submit && (
+                            <div style={{ color: '#ef4444', background: 'rgba(239,68,68,0.1)', padding: '10px 14px', borderRadius: '8px', marginBottom: '12px', fontSize: '13px' }}>
+                                {errors.submit}
+                            </div>
+                        )}
                         <div className={`so-field ${errors.vessel ? 'has-error' : ''}`}>
                             <label htmlFor="exp-vessel">Vessel</label>
                             <select id="exp-vessel" value={form.vessel} onChange={e => updateField('vessel', e.target.value)}>
@@ -305,11 +341,11 @@ export default function Exports() {
                             />
                         </div>
 
-                        <button type="submit" className="so-submit">
+                        <button type="submit" className="so-submit" disabled={submitting}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                                 <path d="M12 5v14m-7-7h14" />
                             </svg>
-                            Submit Export
+                            {submitting ? 'Submitting…' : 'Submit Export'}
                         </button>
                     </form>
                 )}

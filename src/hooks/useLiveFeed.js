@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { dashboardStats, imports as seedImports, exports as seedExports, monthlyVolume } from '../data/shipments';
+import { dashboardStats, monthlyVolume } from '../data/shipments';
 import { vessels as seedVessels } from '../data/vessels';
 import { messageExchangeLog } from '../data/messages';
 import { getUserImports, getUserExports, subscribe } from '../data/tradeStore';
@@ -84,6 +84,8 @@ export function useLiveFeed() {
     const [notifications, setNotifications] = useState([]);
     const [lastUpdated, setLastUpdated] = useState(new Date());
     const [storeVersion, setStoreVersion] = useState(0);
+    const [allImports, setAllImports] = useState([]);
+    const [allExports, setAllExports] = useState([]);
     const counterRef = useRef(1000);
 
     // Subscribe to tradeStore changes to trigger re-reads
@@ -92,13 +94,30 @@ export function useLiveFeed() {
         return unsub;
     }, []);
 
-    // Merge seed + user-submitted data
-    const userImports = getUserImports();
-    const userExports = getUserExports();
-    const allImports = [...userImports, ...seedImports];
-    const allExports = [...userExports, ...seedExports];
+    // Fetch imports and exports from the API
+    useEffect(() => {
+        let cancelled = false;
 
-    // Update stats to reflect user data
+        async function fetchData() {
+            try {
+                const [imps, exps] = await Promise.all([
+                    getUserImports(),
+                    getUserExports(),
+                ]);
+                if (!cancelled) {
+                    setAllImports(imps);
+                    setAllExports(exps);
+                }
+            } catch (err) {
+                console.error('useLiveFeed: failed to fetch shipments', err);
+            }
+        }
+
+        fetchData();
+        return () => { cancelled = true; };
+    }, [storeVersion]);
+
+    // Update stats to reflect API data
     const mergedStats = {
         ...stats,
         totalImports: allImports.length,

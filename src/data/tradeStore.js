@@ -1,9 +1,9 @@
 /**
  * tradeStore.js
  * ─────────────────────────────────────────────────────────
- * Centralized localStorage-backed store for:
- *   • User-submitted shipments (imports / exports)
- *   • Direct messages between trade parties
+ * Centralized store for:
+ *   • Shipments (imports / exports) — NOW backed by MongoDB via API
+ *   • Direct messages between trade parties — still localStorage
  *   • Contact directory of organisations
  *
  * All mutators fire a custom "tradestore" event so React
@@ -11,10 +11,10 @@
  * simple useEffect listener.
  */
 
-// ── Keys ────────────────────────────────────────────────
+import { createShipment, getImports, getExports } from '../services/api';
+
+// ── Keys (still used for messaging / conversations) ─────
 const KEYS = {
-    userImports: 'maitri_user_imports',
-    userExports: 'maitri_user_exports',
     conversations: 'maitri_conversations',
     messages: 'maitri_messages',
 };
@@ -40,82 +40,120 @@ function generateId(prefix) {
     return `${prefix}-${yr}-${seq}`;
 }
 
-function todayISO() {
-    return new Date().toISOString().slice(0, 10);
-}
-
 function nowTimestamp() {
     const d = new Date();
     const pad = n => String(n).padStart(2, '0');
     return `${d.toISOString().slice(0, 10)} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-// ── Shipments ───────────────────────────────────────────
+// ── Notify helper (fires the custom event for React subscribers) ─
+function notifyChange() {
+    window.dispatchEvent(new CustomEvent('tradestore', { detail: { key: 'shipments' } }));
+}
+
+// ── Shipments (MongoDB-backed) ──────────────────────────
 
 /**
- * Add a user-submitted import shipment.
+ * Add a user-submitted import shipment via API.
  * @param {Object} data – { vessel, origin, destination, cargoType, billOfEntry, containers, weight }
- * @returns {Object} the saved record
+ * @returns {Promise<Object>} the saved record from the server
  */
-export function addImport(data) {
-    const record = {
-        id: generateId('IMP'),
+export async function addImport(data) {
+    const record = await createShipment({
+        type: 'import',
         vessel: data.vessel,
         origin: data.origin,
         destination: data.destination,
         cargoType: data.cargoType,
-        billOfEntry: data.billOfEntry || generateId('BOE'),
+        billOfEntry: data.billOfEntry || undefined,
         containers: Number(data.containers) || 0,
         weight: data.weight || '0 MT',
-        status: 'pending',
-        date: data.date || todayISO(),
+        date: data.date || undefined,
         submittedBy: data.submittedBy || 'Unknown',
-        submittedAt: nowTimestamp(),
-        userSubmitted: true,
-    };
-    const list = read(KEYS.userImports);
-    list.unshift(record);
-    write(KEYS.userImports, list);
+    });
+    notifyChange();
     return record;
 }
 
 /**
- * Add a user-submitted export shipment.
+ * Add a user-submitted export shipment via API.
  */
-export function addExport(data) {
-    const record = {
-        id: generateId('EXP'),
+export async function addExport(data) {
+    const record = await createShipment({
+        type: 'export',
         vessel: data.vessel,
         origin: data.origin,
         destination: data.destination,
         cargoType: data.cargoType,
-        shippingBill: data.shippingBill || generateId('SB'),
-        egmStatus: 'pending',
+        shippingBill: data.shippingBill || undefined,
         containers: Number(data.containers) || 0,
         weight: data.weight || '0 MT',
-        status: 'pending',
-        date: data.date || todayISO(),
+        date: data.date || undefined,
         submittedBy: data.submittedBy || 'Unknown',
-        submittedAt: nowTimestamp(),
-        userSubmitted: true,
-    };
-    const list = read(KEYS.userExports);
-    list.unshift(record);
-    write(KEYS.userExports, list);
+    });
+    notifyChange();
     return record;
 }
 
-/** Get all user-submitted imports. */
-export function getUserImports() {
-    return read(KEYS.userImports);
+/**
+ * Get all imports from the database.
+ * Returns a promise — callers must await.
+ */
+export async function getUserImports() {
+    try {
+        const data = await getImports();
+        // Normalize the response so the UI can use `imp.id` as before
+        return data.map(doc => ({
+            id: doc.shipmentId,
+            vessel: doc.vessel,
+            origin: doc.origin,
+            destination: doc.destination,
+            cargoType: doc.cargoType,
+            billOfEntry: doc.billOfEntry,
+            containers: doc.containers,
+            weight: doc.weight,
+            status: doc.status,
+            date: doc.date,
+            userSubmitted: doc.userSubmitted,
+            submittedBy: doc.submittedBy,
+            submittedAt: doc.submittedAt,
+        }));
+    } catch (err) {
+        console.error('Failed to fetch imports from API:', err);
+        return [];
+    }
 }
 
-/** Get all user-submitted exports. */
-export function getUserExports() {
-    return read(KEYS.userExports);
+/**
+ * Get all exports from the database.
+ * Returns a promise — callers must await.
+ */
+export async function getUserExports() {
+    try {
+        const data = await getExports();
+        return data.map(doc => ({
+            id: doc.shipmentId,
+            vessel: doc.vessel,
+            origin: doc.origin,
+            destination: doc.destination,
+            cargoType: doc.cargoType,
+            shippingBill: doc.shippingBill,
+            egmStatus: doc.egmStatus,
+            containers: doc.containers,
+            weight: doc.weight,
+            status: doc.status,
+            date: doc.date,
+            userSubmitted: doc.userSubmitted,
+            submittedBy: doc.submittedBy,
+            submittedAt: doc.submittedAt,
+        }));
+    } catch (err) {
+        console.error('Failed to fetch exports from API:', err);
+        return [];
+    }
 }
 
-// ── Messaging ───────────────────────────────────────────
+// ── Messaging (still localStorage-backed) ───────────────
 
 /**
  * Directory of organisations available for messaging.
