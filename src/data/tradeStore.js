@@ -2,8 +2,8 @@
  * tradeStore.js
  * ─────────────────────────────────────────────────────────
  * Centralized store for:
- *   • Shipments (imports / exports) — NOW backed by MongoDB via API
- *   • Direct messages between trade parties — still localStorage
+ *   • Shipments (imports / exports) — backed by MongoDB via API
+ *   • Direct messages between trade parties — backed by MongoDB via API
  *   • Contact directory of organisations
  *
  * All mutators fire a custom "tradestore" event so React
@@ -13,26 +13,6 @@
 
 import { createShipment, getImports, getExports } from '../services/api';
 
-// ── Keys (still used for messaging / conversations) ─────
-const KEYS = {
-    conversations: 'maitri_conversations',
-    messages: 'maitri_messages',
-};
-
-// ── Helpers ─────────────────────────────────────────────
-function read(key) {
-    try {
-        const raw = localStorage.getItem(key);
-        return raw ? JSON.parse(raw) : [];
-    } catch {
-        return [];
-    }
-}
-
-function write(key, data) {
-    localStorage.setItem(key, JSON.stringify(data));
-    window.dispatchEvent(new CustomEvent('tradestore', { detail: { key } }));
-}
 
 function generateId(prefix) {
     const yr = new Date().getFullYear();
@@ -153,7 +133,14 @@ export async function getUserExports() {
     }
 }
 
-// ── Messaging (still localStorage-backed) ───────────────
+// ── Messaging (now MongoDB-backed via API) ──────────────────────────────────
+
+import {
+    fetchConversations as apiFetchConversations,
+    createConversation as apiCreateConversation,
+    fetchMessages as apiFetchMessages,
+    postMessage as apiPostMessage,
+} from '../services/api';
 
 /**
  * Directory of organisations available for messaging.
@@ -189,74 +176,48 @@ export { MESSAGE_CATEGORIES };
 
 /**
  * Get or create a conversation between the current user and a contact.
+ * Returns a Promise.
  */
-export function getOrCreateConversation(currentUserId, contactId, contactName) {
-    const convos = read(KEYS.conversations);
-    const existing = convos.find(
-        c => (c.participantA === currentUserId && c.participantB === contactId) ||
-            (c.participantA === contactId && c.participantB === currentUserId)
-    );
-    if (existing) return existing;
-
-    const newConvo = {
-        id: `conv-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        participantA: currentUserId,
-        participantB: contactId,
-        contactName,
-        createdAt: nowTimestamp(),
-        lastMessage: null,
-        lastMessageAt: null,
-        unreadCount: 0,
-    };
-    convos.unshift(newConvo);
-    write(KEYS.conversations, convos);
-    return newConvo;
+export async function getOrCreateConversation(currentUserId, contactId, contactName) {
+    const convo = await apiCreateConversation(currentUserId, contactId, contactName);
+    notifyChange();
+    return convo;
 }
 
-/** Get all conversations for a user. */
-export function getConversations(userId) {
-    const convos = read(KEYS.conversations);
-    return convos.filter(c => c.participantA === userId || c.participantB === userId);
+/** Get all conversations for a user. Returns a Promise. */
+export async function getConversations(userId) {
+    try {
+        return await apiFetchConversations(userId);
+    } catch (err) {
+        console.error('Failed to fetch conversations:', err);
+        return [];
+    }
 }
 
 /**
- * Send a message in a conversation.
+ * Send a message in a conversation. Returns a Promise.
  */
-export function sendMessage({ conversationId, senderId, senderName, text, category, relatedShipment }) {
-    const msg = {
-        id: `msg-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+export async function sendMessage({ conversationId, senderId, senderName, text, category, relatedShipment }) {
+    const msg = await apiPostMessage({
         conversationId,
         senderId,
         senderName,
         text,
         category: category || 'General',
         relatedShipment: relatedShipment || null,
-        timestamp: nowTimestamp(),
-        read: false,
-    };
-
-    // Save message
-    const msgs = read(KEYS.messages);
-    msgs.push(msg);
-    write(KEYS.messages, msgs);
-
-    // Update conversation preview
-    const convos = read(KEYS.conversations);
-    const idx = convos.findIndex(c => c.id === conversationId);
-    if (idx !== -1) {
-        convos[idx].lastMessage = text.length > 60 ? text.slice(0, 60) + '…' : text;
-        convos[idx].lastMessageAt = msg.timestamp;
-        write(KEYS.conversations, convos);
-    }
-
+    });
+    notifyChange();
     return msg;
 }
 
-/** Get all messages for a conversation, sorted chronologically. */
-export function getMessages(conversationId) {
-    return read(KEYS.messages)
-        .filter(m => m.conversationId === conversationId)
-        .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+/** Get all messages for a conversation, sorted chronologically. Returns a Promise. */
+export async function getMessages(conversationId) {
+    try {
+        return await apiFetchMessages(conversationId);
+    } catch (err) {
+        console.error('Failed to fetch messages:', err);
+        return [];
+    }
 }
 
 /**
@@ -268,3 +229,4 @@ export function subscribe(callback) {
     window.addEventListener('tradestore', handler);
     return () => window.removeEventListener('tradestore', handler);
 }
+

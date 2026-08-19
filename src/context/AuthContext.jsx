@@ -1,4 +1,5 @@
 import { createContext, useContext, useState, useCallback } from 'react';
+import { contactDirectory } from '../data/tradeStore';
 
 const AuthContext = createContext(null);
 
@@ -174,9 +175,40 @@ function buildOrgName(role, port, orgName) {
     return `${portShort} ${role}`;
 }
 
+/**
+ * Build a userId that matches the contact directory when possible.
+ * This is critical for messaging — both sides of a conversation
+ * must use the same ID for lookups to work.
+ */
 function buildUserId(role, port, orgName) {
-    const base = orgName && orgName.trim() ? orgName.trim() : `${role}-${port}`;
-    return base.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const nameNorm = (orgName || '').trim().toLowerCase();
+    const portShort = port.split('(')[0].trim().toLowerCase();
+    const roleNorm = role.toLowerCase();
+
+    // 1. Try matching by org name against contact directory names
+    if (nameNorm) {
+        const byName = contactDirectory.find(
+            c => c.name.toLowerCase() === nameNorm
+        );
+        if (byName) return byName.id;
+    }
+
+    // 2. Try matching by role + port prefix
+    //    Uses fuzzy role matching: login role "Customs Officer" matches
+    //    contact role "Customs", and "CHA (Customs House Agent)" matches "CHA".
+    const byRolePort = contactDirectory.find(c => {
+        const cPort = c.port.toLowerCase();
+        const cRole = c.role.toLowerCase();
+        const roleMatch = cRole === roleNorm ||
+            roleNorm.includes(cRole) ||
+            cRole.includes(roleNorm);
+        return roleMatch && cPort === portShort;
+    });
+    if (byRolePort) return byRolePort.id;
+
+    // 3. Fallback: generate a slug from the org name or role+port
+    const base = nameNorm || `${role}-${port}`;
+    return base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
 export function AuthProvider({ children }) {

@@ -66,3 +66,31 @@ export function getStats() {
 export function healthCheck() {
     return request('/health');
 }
+
+// ── Messaging ───────────────────────────────────────────────────────────────────
+
+/** Fetch all conversations for a given userId. */
+export function fetchConversations(userId) {
+    return request(`/messages/conversations?userId=${encodeURIComponent(userId)}`);
+}
+
+/** Get or create a conversation between two users. */
+export function createConversation(currentUserId, contactId, contactName) {
+    return request('/messages/conversations', {
+        method: 'POST',
+        body: JSON.stringify({ currentUserId, contactId, contactName }),
+    });
+}
+
+/** Fetch all messages for a conversation. */
+export function fetchMessages(conversationId) {
+    return request(`/messages/${encodeURIComponent(conversationId)}`);
+}
+
+/** Send a message in a conversation. */
+export function postMessage({ conversationId, senderId, senderName, text, category, relatedShipment }) {
+    return request('/messages', {
+        method: 'POST',
+        body: JSON.stringify({ conversationId, senderId, senderName, text, category, relatedShipment }),
+    });
+}

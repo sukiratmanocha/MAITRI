@@ -8,7 +8,6 @@ import {
     getConversations,
     sendMessage,
     getMessages,
-    subscribe,
 } from '../data/tradeStore';
 import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
@@ -25,45 +24,118 @@ export default function Messages() {
     const [newCategory, setNewCategory] = useState('General');
     const [showNewConvo, setShowNewConvo] = useState(false);
     const [contactSearch, setContactSearch] = useState('');
-    const chatEndRef = useRef(null);
+    const [loading, setLoading] = useState(false);
+    const chatMessagesRef = useRef(null);
+    const activeConvoRef = useRef(null);
+    const prevMessagesLengthRef = useRef(0);
 
     const userId = user?.userId || 'unknown';
 
-    // Load conversations
-    const loadConversations = useCallback(() => {
-        setConversations(getConversations(userId));
-    }, [userId]);
-
-    // Load messages for active conversation
-    const loadMessages = useCallback(() => {
-        if (activeConvo) {
-            setMessages(getMessages(activeConvo.id));
+    // Helper to scroll chat container internally without affecting outer window scroll
+    const scrollToBottom = useCallback((behavior = 'auto') => {
+        if (chatMessagesRef.current) {
+            const { scrollHeight, clientHeight } = chatMessagesRef.current;
+            if (behavior === 'smooth') {
+                chatMessagesRef.current.scrollTo({
+                    top: scrollHeight - clientHeight,
+                    behavior: 'smooth',
+                });
+            } else {
+                chatMessagesRef.current.scrollTop = scrollHeight - clientHeight;
+            }
         }
+    }, []);
+
+    // Keep a ref in sync with activeConvo so the polling interval
+    // always reads the latest value without re-creating the interval.
+    useEffect(() => {
+        activeConvoRef.current = activeConvo;
     }, [activeConvo]);
 
+    // Load conversations from the API
+    const loadConversations = useCallback(async () => {
+        try {
+            const data = await getConversations(userId);
+            setConversations(prev => {
+                if (prev.length === data.length) {
+                    const isSame = prev.every((c, i) => {
+                        const d = data[i];
+                        return (c._id || c.id) === (d._id || d.id) &&
+                            c.lastMessageAt === d.lastMessageAt &&
+                            c.lastMessage === d.lastMessage;
+                    });
+                    if (isSame) return prev;
+                }
+                return data;
+            });
+        } catch (err) {
+            console.error('Failed to load conversations:', err);
+        }
+    }, [userId]);
+
+    // Load messages for the active conversation from the API
+    const loadMessages = useCallback(async (isInitial = false) => {
+        const convo = activeConvoRef.current;
+        if (!convo) return;
+        try {
+            const convoId = convo._id || convo.id;
+            const data = await getMessages(convoId);
+            setMessages(prev => {
+                if (!isInitial && prev.length === data.length) {
+                    const lastPrev = prev[prev.length - 1];
+                    const lastData = data[data.length - 1];
+                    if ((!lastPrev && !lastData) || (lastPrev && lastData && (lastPrev._id || lastPrev.id) === (lastData._id || lastData.id))) {
+                        return prev;
+                    }
+                }
+                return data;
+            });
+        } catch (err) {
+            console.error('Failed to load messages:', err);
+        }
+    }, []);
+
+    // Initial load
     useEffect(() => {
         loadConversations();
     }, [loadConversations]);
 
+    // Load messages whenever the active conversation changes
     useEffect(() => {
-        loadMessages();
-    }, [loadMessages]);
+        if (activeConvo) {
+            loadMessages(true);
+            setTimeout(() => {
+                scrollToBottom('auto');
+            }, 60);
+        } else {
+            setMessages([]);
+        }
+    }, [activeConvo, loadMessages, scrollToBottom]);
 
-    // Subscribe to store updates
+    // Poll for new messages / conversations every 3 seconds
     useEffect(() => {
-        const unsub = subscribe(() => {
+        const interval = setInterval(() => {
             loadConversations();
-            loadMessages();
-        });
-        return unsub;
+            if (activeConvoRef.current) {
+                loadMessages(false);
+            }
+        }, 3000);
+        return () => clearInterval(interval);
     }, [loadConversations, loadMessages]);
 
-    // Scroll chat to bottom on new messages
+    // Scroll chat to bottom only when new messages actually arrive and container is already near bottom
     useEffect(() => {
-        if (chatEndRef.current) {
-            chatEndRef.current.scrollIntoView({ behavior: 'smooth' });
+        if (messages.length > 0) {
+            if (chatMessagesRef.current) {
+                const { scrollTop, scrollHeight, clientHeight } = chatMessagesRef.current;
+                const isNearBottom = scrollHeight - scrollTop - clientHeight < 120;
+                if (isNearBottom || messages.length - prevMessagesLengthRef.current === 1) {
+                    scrollToBottom(prevMessagesLengthRef.current === 0 ? 'auto' : 'smooth');
+                }
+            }
         }
-    }, [messages]);
+        prevMessagesLengthRef.current = messages.length;
+    }, [messages, scrollToBottom]);
 
     // Filter message types
     const filteredMsgTypes = msgTab === 'all'
@@ -71,30 +143,50 @@ export default function Messages() {
         : messageTypes.filter(m => m.category.toLowerCase() === msgTab);
 
     // Start new conversation
-    function startConversation(contact) {
-        const convo = getOrCreateConversation(userId, contact.id, contact.name);
-        setActiveConvo(convo);
-        setShowNewConvo(false);
-        setContactSearch('');
-        loadConversations();
-        setMessages(getMessages(convo.id));
+    async function startConversation(contact) {
+        setLoading(true);
+        try {
+            const convo = await getOrCreateConversation(userId, contact.id, contact.name);
+            setActiveConvo(convo);
+            setShowNewConvo(false);
+            setContactSearch('');
+            await loadConversations();
+            const convoId = convo._id || convo.id;
+            const msgs = await getMessages(convoId);
+            setMessages(msgs);
+            setTimeout(() => scrollToBottom('auto'), 60);
+        } catch (err) {
+            console.error('Failed to start conversation:', err);
+        } finally {
+            setLoading(false);
+        }
     }
 
     // Send message
-    function handleSend(e) {
+    async function handleSend(e) {
         e.preventDefault();
         if (!newText.trim() || !activeConvo) return;
 
-        sendMessage({
-            conversationId: activeConvo.id,
-            senderId: userId,
-            senderName: user?.organization || 'You',
-            text: newText.trim(),
-            category: newCategory,
-            relatedShipment: null,
-        });
+        const convoId = activeConvo._id || activeConvo.id;
+        try {
+            await sendMessage({
+                conversationId: convoId,
+                senderId: userId,
+                senderName: user?.organization || 'You',
+                text: newText.trim(),
+                category: newCategory,
+                relatedShipment: null,
+            });
 
-        setNewText('');
+            setNewText('');
+            // Immediately reload messages and conversations to show the sent message
+            const msgs = await getMessages(convoId);
+            setMessages(msgs);
+            await loadConversations();
+            setTimeout(() => scrollToBottom('smooth'), 60);
+        } catch (err) {
+            console.error('Failed to send message:', err);
+        }
     }
 
     // Filtered contacts for new conversation
@@ -104,6 +196,9 @@ export default function Messages() {
         return c.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
             c.role.toLowerCase().includes(contactSearch.toLowerCase());
     });
+
+    // Helper: get conversation ID (works with both _id and id)
+    const getConvoId = (c) => c?._id || c?.id;
 
     return (
         <div className="messages-page">
@@ -231,8 +326,8 @@ export default function Messages() {
 
                                     return (
                                         <div
-                                            key={c.id}
-                                            className={`convo-item ${activeConvo?.id === c.id ? 'active' : ''}`}
+                                            key={getConvoId(c)}
+                                            className={`convo-item ${getConvoId(activeConvo) === getConvoId(c) ? 'active' : ''}`}
                                             onClick={() => setActiveConvo(c)}
                                         >
                                             <div className="convo-avatar">{otherAvatar}</div>
@@ -252,6 +347,13 @@ export default function Messages() {
 
                     {/* Chat area */}
                     <div className="chat-area">
+                        {/* Loading overlay */}
+                        {loading && (
+                            <div className="chat-placeholder">
+                                <p>Loading…</p>
+                            </div>
+                        )}
+
                         {/* New conversation picker overlay */}
                         {showNewConvo && (
                             <div className="new-convo-overlay">
@@ -297,7 +399,7 @@ export default function Messages() {
                         )}
 
                         {/* No conversation selected */}
-                        {!activeConvo && !showNewConvo && (
+                        {!activeConvo && !showNewConvo && !loading && (
                             <div className="chat-placeholder">
                                 <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--border)" strokeWidth="1.2" strokeLinecap="round">
                                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
@@ -308,7 +410,7 @@ export default function Messages() {
                         )}
 
                         {/* Active conversation */}
-                        {activeConvo && !showNewConvo && (
+                        {activeConvo && !showNewConvo && !loading && (
                             <>
                                 {/* Chat header */}
                                 <div className="chat-header">
@@ -334,7 +436,7 @@ export default function Messages() {
                                 </div>
 
                                 {/* Messages */}
-                                <div className="chat-messages">
+                                <div className="chat-messages" ref={chatMessagesRef}>
                                     {messages.length === 0 ? (
                                         <div className="chat-no-messages">
                                             <p>No messages yet — start the conversation!</p>
@@ -342,8 +444,9 @@ export default function Messages() {
                                     ) : (
                                         messages.map(m => {
                                             const isMine = m.senderId === userId;
+                                            const msgKey = m._id || m.id;
                                             return (
-                                                <div key={m.id} className={`chat-bubble-wrap ${isMine ? 'mine' : 'theirs'}`}>
+                                                <div key={msgKey} className={`chat-bubble-wrap ${isMine ? 'mine' : 'theirs'}`}>
                                                     <div className={`chat-bubble ${isMine ? 'mine' : 'theirs'}`}>
                                                         {!isMine && <span className="bubble-sender">{m.senderName}</span>}
                                                         <p className="bubble-text">{m.text}</p>
@@ -358,7 +461,6 @@ export default function Messages() {
                                             );
                                         })
                                     )}
-                                    <div ref={chatEndRef} />
                                 </div>
 
                                 {/* Compose */}
@@ -424,3 +526,4 @@ export default function Messages() {
         </div>
     );
 }
+

@@ -3,6 +3,7 @@ import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
 import shipmentsRouter from './routes/shipments.js';
+import messagesRouter from './routes/messages.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -14,6 +15,7 @@ app.use(express.json());
 
 // ── Routes ─────────────────────────────────────────────────────────────────────
 app.use('/api/shipments', shipmentsRouter);
+app.use('/api/messages', messagesRouter);
 
 // Health check
 app.get('/api/health', (_req, res) => {
