@@ -4,6 +4,32 @@ import { vessels as seedVessels } from '../data/vessels';
 import { messageExchangeLog } from '../data/messages';
 import { getUserImports, getUserExports, subscribe } from '../data/tradeStore';
 
+// ── Persistence helpers ────────────────────────────────────────────────────────
+const LS_FLAGS_KEY = 'maitri_vessel_flags';
+const LS_STATUSES_KEY = 'maitri_vessel_statuses';
+
+function loadFlags() {
+    try { return JSON.parse(localStorage.getItem(LS_FLAGS_KEY) || '{}'); } catch { return {}; }
+}
+function saveFlags(flags) {
+    try { localStorage.setItem(LS_FLAGS_KEY, JSON.stringify(flags)); } catch { }
+}
+function loadStatuses() {
+    try { return JSON.parse(localStorage.getItem(LS_STATUSES_KEY) || '{}'); } catch { return {}; }
+}
+function saveStatuses(statuses) {
+    try { localStorage.setItem(LS_STATUSES_KEY, JSON.stringify(statuses)); } catch { }
+}
+
+/** Apply persisted status/flag overrides on top of seed vessels */
+function applyPersistedOverrides(seed, flags, statuses) {
+    return seed.map(v => ({
+        ...v,
+        ...(statuses[v.id] !== undefined ? { status: statuses[v.id] } : {}),
+        ...(flags[v.id] ? { flagged: true } : { flagged: false }),
+    }));
+}
+
 // ── Status machine ─────────────────────────────────────────────────────────────
 const STATUS_CYCLE = {
     in_transit: 'arriving_soon',
@@ -79,13 +105,20 @@ function buildNotification(id, vessel, fromStatus, toStatus) {
 // ── Hook ────────────────────────────────────────────────────────────────────────
 export function useLiveFeed() {
     const [stats, setStats] = useState({ ...dashboardStats, containersProcessed: 2840 });
-    const [vessels, setVessels] = useState([...seedVessels]);
+    // Initialize vessels with any persisted status/flag overrides from localStorage
+    const [vessels, setVessels] = useState(() => {
+        const flags = loadFlags();
+        const statuses = loadStatuses();
+        return applyPersistedOverrides([...seedVessels], flags, statuses);
+    });
     const [recentActivity, setRecentActivity] = useState(messageExchangeLog.slice(0, 6));
     const [notifications, setNotifications] = useState([]);
     const [lastUpdated, setLastUpdated] = useState(new Date());
     const [storeVersion, setStoreVersion] = useState(0);
     const [allImports, setAllImports] = useState([]);
     const [allExports, setAllExports] = useState([]);
+    // Track flagged/held vessels — initialised from localStorage
+    const [vesselFlags, setVesselFlags] = useState(() => loadFlags());
     const counterRef = useRef(1000);
 
     // Subscribe to tradeStore changes to trigger re-reads
@@ -173,6 +206,103 @@ export function useLiveFeed() {
         setNotifications(prev => prev.map(n => n.id === notifId ? { ...n, read: true } : n));
     }, []);
 
+    /**
+     * Change a vessel's status in real-time (RBAC action).
+     * Emits a notification and persists the override to localStorage.
+     */
+    const changeVesselStatus = useCallback((vesselId, newStatus, changedBy) => {
+        counterRef.current += 1;
+        const id = counterRef.current;
+        setVessels(prev => {
+            const idx = prev.findIndex(v => v.id === vesselId);
+            if (idx === -1) return prev;
+            const vessel = prev[idx];
+            if (vessel.status === newStatus) return prev;
+            // Emit notification for manual status change
+            const notif = buildNotification(id, vessel, vessel.status, newStatus);
+            notif.message = `[Manual] ${notif.message}${changedBy ? ` (by ${changedBy})` : ''}`;
+            notif.manualChange = true;
+            setNotifications(n => [notif, ...n].slice(0, 50));
+            const updated = [...prev];
+            updated[idx] = { ...vessel, status: newStatus };
+            // Persist the new status override
+            const saved = loadStatuses();
+            saved[vesselId] = newStatus;
+            saveStatuses(saved);
+            return updated;
+        });
+        setLastUpdated(new Date());
+    }, []);
+
+    /**
+     * Flag / hold a vessel (Customs RBAC action). Persisted to localStorage.
+     */
+    const flagVessel = useCallback((vesselId, reason, flaggedBy) => {
+        counterRef.current += 1;
+        const id = counterRef.current;
+        const flagEntry = { flagged: true, reason: reason || 'Under Inspection', by: flaggedBy || 'Customs', at: nowTimestamp() };
+        setVesselFlags(prev => {
+            const next = { ...prev, [vesselId]: flagEntry };
+            saveFlags(next);
+            return next;
+        });
+        // Also lock status to at_port and persist
+        setVessels(prev => {
+            const idx = prev.findIndex(v => v.id === vesselId);
+            if (idx === -1) return prev;
+            const vessel = prev[idx];
+            const prevStatus = vessel.status;
+            const updated = [...prev];
+            updated[idx] = { ...vessel, status: 'at_port', flagged: true };
+            // Persist status override
+            const saved = loadStatuses();
+            saved[vesselId] = 'at_port';
+            saveStatuses(saved);
+            // Notification
+            const notif = {
+                id: `notif-${id}`,
+                type: 'flag',
+                icon: '🚨',
+                vesselName: vessel.name,
+                vesselId: vessel.id,
+                fromStatus: prevStatus,
+                toStatus: 'at_port',
+                port: vessel.currentPort || vessel.destination || 'N/A',
+                message: `⚠️ ${vessel.name} has been flagged/held by ${flaggedBy || 'Customs'}: ${reason || 'Under Inspection'}`,
+                timestamp: nowTimestamp(),
+                read: false,
+                manualChange: true,
+            };
+            setNotifications(n => [notif, ...n].slice(0, 50));
+            return updated;
+        });
+        setLastUpdated(new Date());
+    }, []);
+
+    /**
+     * Remove flag/hold from a vessel. Clears from localStorage.
+     */
+    const unflagVessel = useCallback((vesselId, clearedBy) => {
+        setVesselFlags(prev => {
+            const next = { ...prev };
+            delete next[vesselId];
+            saveFlags(next);
+            return next;
+        });
+        // Remove status override so auto-cycle resumes from last known state
+        const saved = loadStatuses();
+        delete saved[vesselId];
+        saveStatuses(saved);
+        setVessels(prev => {
+            const idx = prev.findIndex(v => v.id === vesselId);
+            if (idx === -1) return prev;
+            const updated = [...prev];
+            updated[idx] = { ...updated[idx], flagged: false };
+            return updated;
+        });
+        setLastUpdated(new Date());
+    }, []);
+
     const unreadCount = notifications.filter(n => !n.read).length;
 
     return {
@@ -188,5 +318,10 @@ export function useLiveFeed() {
         monthlyVolume,
         imports: allImports,
         exports: allExports,
+        // RBAC actions
+        changeVesselStatus,
+        flagVessel,
+        unflagVessel,
+        vesselFlags,
     };
 }

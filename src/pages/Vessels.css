@@ -310,3 +310,278 @@
 .btn-clear-search:hover {
     opacity: 0.8;
 }
+
+/* ── RBAC Action Controls ────────────────────────────────── */
+.vessel-actions {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px solid var(--border);
+}
+
+.action-group {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    flex: 1;
+    min-width: 120px;
+}
+
+.action-label {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.status-change-select {
+    padding: 6px 10px;
+    border-radius: 8px;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    width: 100%;
+}
+
+.status-change-select:focus {
+    outline: none;
+    border-color: var(--primary);
+}
+
+.status-change-select:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.btn-flag {
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1.5px solid #ef4444;
+    background: rgba(239, 68, 68, 0.08);
+    color: #ef4444;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.btn-flag:hover {
+    background: #ef4444;
+    color: #fff;
+}
+
+.btn-unflag {
+    padding: 7px 14px;
+    border-radius: 8px;
+    border: 1.5px solid #22c55e;
+    background: rgba(34, 197, 94, 0.08);
+    color: #16a34a;
+    font-size: 13px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.2s;
+    white-space: nowrap;
+    width: 100%;
+}
+
+.btn-unflag:hover {
+    background: #22c55e;
+    color: #fff;
+}
+
+/* Flagged card highlight */
+.vessel-flagged {
+    border-left: 3px solid #ef4444 !important;
+    background: rgba(239, 68, 68, 0.03);
+}
+
+.flag-badge {
+    background: #ef4444;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 700;
+    padding: 2px 8px;
+    border-radius: 20px;
+    letter-spacing: 0.04em;
+    animation: pulse-flag 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse-flag {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.65; }
+}
+
+.flag-info-row .flag-reason-text {
+    color: #ef4444;
+    font-weight: 600;
+}
+
+/* ── Flag Dialog ──────────────────────────────────────────── */
+.flag-dialog-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    backdrop-filter: blur(4px);
+    z-index: 1000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    animation: fadeIn 0.15s ease;
+}
+
+.flag-dialog {
+    background: var(--surface, #fff);
+    border-radius: 16px;
+    padding: 28px;
+    max-width: 440px;
+    width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.25);
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    animation: slideUp 0.2s ease;
+}
+
+.flag-dialog-header {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+}
+
+.flag-dialog-icon {
+    font-size: 32px;
+}
+
+.flag-dialog-header h3 {
+    margin: 0;
+    font-size: 18px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.flag-dialog-vessel {
+    margin: 2px 0 0;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.flag-label {
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--text-secondary);
+}
+
+.flag-reasons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.flag-reason-btn {
+    padding: 6px 14px;
+    border-radius: 20px;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.flag-reason-btn:hover {
+    border-color: #ef4444;
+    color: #ef4444;
+}
+
+.flag-reason-btn.selected {
+    border-color: #ef4444;
+    background: rgba(239, 68, 68, 0.1);
+    color: #ef4444;
+    font-weight: 600;
+}
+
+.flag-custom-reason {
+    padding: 10px 14px;
+    border-radius: 10px;
+    border: 1.5px solid var(--border);
+    background: var(--surface);
+    color: var(--text-primary);
+    font-size: 14px;
+    font-family: inherit;
+    width: 100%;
+    box-sizing: border-box;
+    transition: border-color 0.2s;
+}
+
+.flag-custom-reason:focus {
+    outline: none;
+    border-color: #ef4444;
+}
+
+.flag-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 4px;
+}
+
+.btn-cancel {
+    padding: 9px 20px;
+    border-radius: 10px;
+    border: 1.5px solid var(--border);
+    background: transparent;
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 600;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-cancel:hover {
+    background: var(--surface-hover, #f1f5f9);
+}
+
+.btn-flag-confirm {
+    padding: 9px 20px;
+    border-radius: 10px;
+    border: none;
+    background: #ef4444;
+    color: #fff;
+    font-size: 14px;
+    font-weight: 700;
+    font-family: inherit;
+    cursor: pointer;
+    transition: all 0.15s;
+}
+
+.btn-flag-confirm:hover:not(:disabled) {
+    background: #dc2626;
+    transform: translateY(-1px);
+}
+
+.btn-flag-confirm:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+@keyframes slideUp {
+    from { transform: translateY(20px); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+}

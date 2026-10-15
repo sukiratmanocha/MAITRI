@@ -128,24 +128,7 @@ export default function Login() {
                     </div>
                 </div>
 
-                {/* Quick Account Switcher for Prototype Testing */}
-                <div className="demo-switcher">
-                    <span className="demo-label">⚡ Quick Demo Select:</span>
-                    <div className="demo-pills">
-                        {DEMO_ACCOUNTS.map(acc => (
-                            <button
-                                key={acc.label}
-                                type="button"
-                                className={`demo-pill ${orgName === acc.org ? 'active' : ''}`}
-                                onClick={() => selectDemoAccount(acc)}
-                                title={`Switch to ${acc.label} (${acc.role})`}
-                            >
-                                <span>{acc.icon}</span>
-                                <span>{acc.label}</span>
-                            </button>
-                        ))}
-                    </div>
-                </div>
+
 
                 <form className="login-form" onSubmit={handleSubmit}>
                     {passwordError && (
@@ -194,6 +177,17 @@ export default function Login() {
                         </div>
                     </div>
 
+                <div className="feature-list">
+                  <h2 className="feature-title">Available Actions</h2>
+                  <ul className="feature-items">
+                    {rolePerms.canChangeStatus && (
+                      <li className="feature-item">Change Vessel Status</li>
+                    )}
+                    {rolePerms.canFlagHold && (
+                      <li className="feature-item">Flag/Hold Vessels</li>
+                    )}
+                  </ul>
+                </div>
                     <div className="form-group">
                         <label htmlFor="port-select">Select Port / Location</label>
                         <select
