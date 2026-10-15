@@ -1,5 +1,5 @@
 import { createContext, useContext, useState, useCallback } from 'react';
-import { contactDirectory } from '../data/tradeStore';
+import { contactDirectory, registerUser } from '../data/tradeStore';
 
 const AuthContext = createContext(null);
 
@@ -171,7 +171,7 @@ export { ROLE_PERMISSIONS };
 
 function buildOrgName(role, port, orgName) {
     if (orgName && orgName.trim()) return orgName.trim();
-    const portShort = port.split('(')[0].trim();
+    const portShort = (port || '').split('(')[0].trim();
     return `${portShort} ${role}`;
 }
 
@@ -182,32 +182,35 @@ function buildOrgName(role, port, orgName) {
  */
 function buildUserId(role, port, orgName) {
     const nameNorm = (orgName || '').trim().toLowerCase();
-    const portShort = port.split('(')[0].trim().toLowerCase();
-    const roleNorm = role.toLowerCase();
+    const portShort = (port || '').split('(')[0].trim().toLowerCase();
+    const roleNorm = (role || '').toLowerCase();
 
-    // 1. Try matching by org name against contact directory names
+    // 1. Try matching by exact or substring against contact directory
     if (nameNorm) {
-        const byName = contactDirectory.find(
-            c => c.name.toLowerCase() === nameNorm
+        const byExact = contactDirectory.find(
+            c => c.name.toLowerCase() === nameNorm || c.id.toLowerCase() === nameNorm
         );
-        if (byName) return byName.id;
+        if (byExact) return byExact.id;
+
+        const bySub = contactDirectory.find(
+            c => c.name.toLowerCase().includes(nameNorm) || nameNorm.includes(c.name.toLowerCase())
+        );
+        if (bySub) return bySub.id;
     }
 
     // 2. Try matching by role + port prefix
-    //    Uses fuzzy role matching: login role "Customs Officer" matches
-    //    contact role "Customs", and "CHA (Customs House Agent)" matches "CHA".
     const byRolePort = contactDirectory.find(c => {
-        const cPort = c.port.toLowerCase();
-        const cRole = c.role.toLowerCase();
+        const cPort = (c.port || '').toLowerCase();
+        const cRole = (c.role || '').toLowerCase();
         const roleMatch = cRole === roleNorm ||
             roleNorm.includes(cRole) ||
             cRole.includes(roleNorm);
-        return roleMatch && cPort === portShort;
+        return roleMatch && (cPort === portShort || cPort === 'global' || cPort === 'india');
     });
     if (byRolePort) return byRolePort.id;
 
     // 3. Fallback: generate a slug from the org name or role+port
-    const base = nameNorm || `${role}-${port}`;
+    const base = nameNorm || `${role}-${portShort}`;
     return base.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
 }
 
@@ -217,19 +220,21 @@ export function AuthProvider({ children }) {
     const login = useCallback(({ role, port, organization: orgName, department }) => {
         const permissions = ROLE_PERMISSIONS[role] || {};
         const organization = buildOrgName(role, port, orgName);
+        const userId = buildUserId(role, port, orgName);
         const newUser = {
             role,
             port,
             department: department || '',
             avatar: initials(orgName || role),
             organization,
-            userId: buildUserId(role, port, orgName),
+            userId,
             permissions,
             roleIcon: permissions.icon || '👤',
             roleColor: permissions.color || '#64748b',
             loginAt: new Date().toISOString(),
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(newUser));
+        registerUser(newUser);
         setUser(newUser);
     }, []);
 

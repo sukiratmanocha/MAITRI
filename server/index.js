@@ -25,16 +25,15 @@ app.get('/api/health', (_req, res) => {
 // ── Start ───────────────────────────────────────────────────────────────────────
 async function start() {
     try {
-        await mongoose.connect(MONGO_URI);
+        await mongoose.connect(MONGO_URI, { serverSelectionTimeoutMS: 2000 });
         console.log('✅  Connected to MongoDB:', MONGO_URI);
-
-        app.listen(PORT, () => {
-            console.log(`🚀  MAITRI API server running on http://localhost:${PORT}`);
-        });
     } catch (err) {
-        console.error('❌  Failed to connect to MongoDB:', err.message);
-        process.exit(1);
+        console.warn(`⚠️  MongoDB not available (${err.message}). API server running in resilient mode.`);
     }
+
+    app.listen(PORT, () => {
+        console.log(`🚀  MAITRI API server running on http://localhost:${PORT}`);
+    });
 }
 
 start();

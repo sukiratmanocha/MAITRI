@@ -30,6 +30,15 @@ const DEPARTMENTS = {
     'Trade Finance (Bank)': ['Letter of Credit', 'Trade Documentation', 'Risk Assessment', 'Compliance'],
 };
 
+const DEMO_ACCOUNTS = [
+    { label: 'Tata International', role: 'Exporter', port: 'JNPA (Nhava Sheva)', org: 'Tata International', icon: '📦' },
+    { label: 'Indian Customs', role: 'Customs Officer', port: 'JNPA (Nhava Sheva)', org: 'Indian Customs (ICEGATE)', icon: '🛃' },
+    { label: 'Maersk Line', role: 'Shipping Line', port: 'JNPA (Nhava Sheva)', org: 'Maersk Line', icon: '🚢' },
+    { label: 'JNPA Port Auth', role: 'Port Authority', port: 'JNPA (Nhava Sheva)', org: 'JNPA Port Authority', icon: '🏗️' },
+    { label: 'Reliance Ind.', role: 'Importer', port: 'JNPA (Nhava Sheva)', org: 'Reliance Industries', icon: '📥' },
+    { label: 'Adani CHA', role: 'CHA (Customs House Agent)', port: 'Kandla', org: 'Adani CHA Services', icon: '📋' },
+];
+
 export default function Login() {
     const navigate = useNavigate();
     const { user, login } = useAuth();
@@ -37,6 +46,9 @@ export default function Login() {
     const [port, setPort] = useState(PORTS[0].name);
     const [orgName, setOrgName] = useState('');
     const [department, setDepartment] = useState('');
+    const [password, setPassword] = useState('');
+    const [showPassword, setShowPassword] = useState(false);
+    const [passwordError, setPasswordError] = useState('');
     const [loading, setLoading] = useState(false);
 
     const rolePerms = ROLE_PERMISSIONS[role] || {};
@@ -52,13 +64,34 @@ export default function Login() {
         setDepartment('');
     }, [role]);
 
+    function selectDemoAccount(acc) {
+        setRole(acc.role);
+        setPort(acc.port);
+        setOrgName(acc.org);
+        setPassword('0000');
+        setPasswordError('');
+    }
+
     function handleSubmit(e) {
         e.preventDefault();
+
+        if (!password.trim()) {
+            setPasswordError('Password is required to log in.');
+            return;
+        }
+
+        if (password.trim() !== '0000') {
+            setPasswordError("Invalid password. Prototype password is '0000'.");
+            return;
+        }
+
+        setPasswordError('');
         setLoading(true);
+
         setTimeout(() => {
             login({ role, port, organization: orgName, department });
             navigate('/dashboard');
-        }, 400);
+        }, 350);
     }
 
     return (
@@ -95,7 +128,37 @@ export default function Login() {
                     </div>
                 </div>
 
+                {/* Quick Account Switcher for Prototype Testing */}
+                <div className="demo-switcher">
+                    <span className="demo-label">⚡ Quick Demo Select:</span>
+                    <div className="demo-pills">
+                        {DEMO_ACCOUNTS.map(acc => (
+                            <button
+                                key={acc.label}
+                                type="button"
+                                className={`demo-pill ${orgName === acc.org ? 'active' : ''}`}
+                                onClick={() => selectDemoAccount(acc)}
+                                title={`Switch to ${acc.label} (${acc.role})`}
+                            >
+                                <span>{acc.icon}</span>
+                                <span>{acc.label}</span>
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
                 <form className="login-form" onSubmit={handleSubmit}>
+                    {passwordError && (
+                        <div className="login-error-alert" role="alert">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                <circle cx="12" cy="12" r="10" />
+                                <line x1="12" y1="8" x2="12" y2="12" />
+                                <line x1="12" y1="16" x2="12.01" y2="16" />
+                            </svg>
+                            <span>{passwordError}</span>
+                        </div>
+                    )}
+
                     <div className="form-group">
                         <label htmlFor="role-select">Select Your Role</label>
                         <select
@@ -161,7 +224,7 @@ export default function Login() {
 
                     {departments.length > 0 && (
                         <div className="form-group">
-                            <label htmlFor="dept-select">Department </label>
+                            <label htmlFor="dept-select">Department</label>
                             <select
                                 id="dept-select"
                                 value={department}
@@ -175,6 +238,54 @@ export default function Login() {
                             </select>
                         </div>
                     )}
+
+                    {/* Password Field with Prototype Passcode */}
+                    <div className="form-group">
+                        <div className="label-with-hint">
+                            <label htmlFor="password-input">
+                                Password <span className="req-star">*</span>
+                            </label>
+                            <span className="prototype-pill">Passcode: 0000</span>
+                        </div>
+                        <div className={`password-input-wrap ${passwordError ? 'has-error' : ''}`}>
+                            <svg className="input-icon-lock" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                                <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                            </svg>
+                            <input
+                                id="password-input"
+                                type={showPassword ? 'text' : 'password'}
+                                placeholder="Enter prototype password (0000)"
+                                value={password}
+                                onChange={e => {
+                                    setPassword(e.target.value);
+                                    if (passwordError) setPasswordError('');
+                                }}
+                                disabled={loading}
+                                autoComplete="current-password"
+                                required
+                            />
+                            <button
+                                type="button"
+                                className="password-toggle-btn"
+                                onClick={() => setShowPassword(p => !p)}
+                                title={showPassword ? 'Hide password' : 'Show password'}
+                                tabIndex="-1"
+                            >
+                                {showPassword ? (
+                                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                                        <line x1="1" y1="1" x2="23" y2="23" />
+                                    </svg>
+                                ) : (
+                                    <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
+                                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                        <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                )}
+                            </button>
+                        </div>
+                    </div>
 
                     <button type="submit" className={`login-btn ${loading ? 'loading' : ''}`} disabled={loading}>
                         {loading ? (

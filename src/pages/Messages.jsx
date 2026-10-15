@@ -1,20 +1,22 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { messageTypes, messageExchangeLog } from '../data/messages';
 import { integrationStatus } from '../data/ports';
 import {
-    contactDirectory,
+    getContactDirectory,
+    findContact,
     MESSAGE_CATEGORIES,
     getOrCreateConversation,
     getConversations,
     sendMessage,
     getMessages,
+    subscribe,
 } from '../data/tradeStore';
 import { useAuth } from '../context/AuthContext';
 import StatusBadge from '../components/StatusBadge';
 import './Messages.css';
 
 export default function Messages() {
-    const { user } = useAuth();
+    const { user, logout } = useAuth();
     const [msgTab, setMsgTab] = useState('all');
 
     const [conversations, setConversations] = useState([]);
@@ -24,12 +26,16 @@ export default function Messages() {
     const [newCategory, setNewCategory] = useState('General');
     const [showNewConvo, setShowNewConvo] = useState(false);
     const [contactSearch, setContactSearch] = useState('');
+    const [convoSearch, setConvoSearch] = useState('');
     const [loading, setLoading] = useState(false);
+    const [sending, setSending] = useState(false);
+
     const chatMessagesRef = useRef(null);
     const activeConvoRef = useRef(null);
     const prevMessagesLengthRef = useRef(0);
 
     const userId = user?.userId || 'unknown';
+    const userName = user?.organization || user?.name || user?.role || 'You';
 
     // Helper to scroll chat container internally without affecting outer window scroll
     const scrollToBottom = useCallback((behavior = 'auto') => {
@@ -46,21 +52,24 @@ export default function Messages() {
         }
     }, []);
 
-    // Keep a ref in sync with activeConvo so the polling interval
-    // always reads the latest value without re-creating the interval.
+    // Keep activeConvo ref in sync
     useEffect(() => {
         activeConvoRef.current = activeConvo;
     }, [activeConvo]);
 
-    // Load conversations from the API
+    // Helper: get conversation ID (works with both _id and id)
+    const getConvoId = useCallback((c) => c?._id || c?.id, []);
+
+    // Load conversations for the current user
     const loadConversations = useCallback(async () => {
+        if (!userId || userId === 'unknown') return;
         try {
             const data = await getConversations(userId);
             setConversations(prev => {
                 if (prev.length === data.length) {
                     const isSame = prev.every((c, i) => {
                         const d = data[i];
-                        return (c._id || c.id) === (d._id || d.id) &&
+                        return getConvoId(c) === getConvoId(d) &&
                             c.lastMessageAt === d.lastMessageAt &&
                             c.lastMessage === d.lastMessage;
                     });
@@ -68,17 +77,26 @@ export default function Messages() {
                 }
                 return data;
             });
+
+            // Update activeConvo reference if it was updated
+            if (activeConvoRef.current) {
+                const currentActiveId = getConvoId(activeConvoRef.current);
+                const updatedActive = data.find(c => getConvoId(c) === currentActiveId);
+                if (updatedActive) {
+                    setActiveConvo(updatedActive);
+                }
+            }
         } catch (err) {
             console.error('Failed to load conversations:', err);
         }
-    }, [userId]);
+    }, [userId, getConvoId]);
 
-    // Load messages for the active conversation from the API
+    // Load messages for the active conversation
     const loadMessages = useCallback(async (isInitial = false) => {
         const convo = activeConvoRef.current;
         if (!convo) return;
+        const convoId = convo._id || convo.id;
         try {
-            const convoId = convo._id || convo.id;
             const data = await getMessages(convoId);
             setMessages(prev => {
                 if (!isInitial && prev.length === data.length) {
@@ -95,12 +113,19 @@ export default function Messages() {
         }
     }, []);
 
-    // Initial load
+    // Initial load & real-time store subscription
     useEffect(() => {
         loadConversations();
-    }, [loadConversations]);
+        const unsubscribe = subscribe(() => {
+            loadConversations();
+            if (activeConvoRef.current) {
+                loadMessages(false);
+            }
+        });
+        return unsubscribe;
+    }, [loadConversations, loadMessages]);
 
-    // Load messages whenever the active conversation changes
+    // Load messages whenever active conversation changes
     useEffect(() => {
         if (activeConvo) {
             loadMessages(true);
@@ -112,41 +137,61 @@ export default function Messages() {
         }
     }, [activeConvo, loadMessages, scrollToBottom]);
 
-    // Poll for new messages / conversations every 3 seconds
+    // Polling interval (every 2.5s for fast multi-tab and multi-user chat response)
     useEffect(() => {
         const interval = setInterval(() => {
             loadConversations();
             if (activeConvoRef.current) {
                 loadMessages(false);
             }
-        }, 3000);
+        }, 2500);
         return () => clearInterval(interval);
     }, [loadConversations, loadMessages]);
 
-    // Scroll chat to bottom only when new messages actually arrive and container is already near bottom
+    // Scroll chat to bottom when messages update
     useEffect(() => {
-        if (messages.length > 0) {
-            if (chatMessagesRef.current) {
-                const { scrollTop, scrollHeight, clientHeight } = chatMessagesRef.current;
-                const isNearBottom = scrollHeight - scrollTop - clientHeight < 120;
-                if (isNearBottom || messages.length - prevMessagesLengthRef.current === 1) {
-                    scrollToBottom(prevMessagesLengthRef.current === 0 ? 'auto' : 'smooth');
-                }
+        if (messages.length > 0 && chatMessagesRef.current) {
+            const { scrollTop, scrollHeight, clientHeight } = chatMessagesRef.current;
+            const isNearBottom = scrollHeight - scrollTop - clientHeight < 140;
+            if (isNearBottom || messages.length - prevMessagesLengthRef.current === 1) {
+                scrollToBottom(prevMessagesLengthRef.current === 0 ? 'auto' : 'smooth');
             }
         }
         prevMessagesLengthRef.current = messages.length;
     }, [messages, scrollToBottom]);
 
-    // Filter message types
+    // Auto-select first conversation if none selected and conversations exist
+    useEffect(() => {
+        if (!activeConvo && conversations.length > 0 && !showNewConvo) {
+            setActiveConvo(conversations[0]);
+        }
+    }, [conversations, activeConvo, showNewConvo]);
+
+    // Filter message types for reference table
     const filteredMsgTypes = msgTab === 'all'
         ? messageTypes
         : messageTypes.filter(m => m.category.toLowerCase() === msgTab);
 
-    // Start new conversation
+    // Filter conversations by search term
+    const filteredConversations = useMemo(() => {
+        if (!convoSearch.trim()) return conversations;
+        const q = convoSearch.toLowerCase();
+        return conversations.filter(c => {
+            const isA = c.participantA === userId;
+            const otherName = isA ? (c.participantBName || c.contactName) : c.participantAName;
+            const otherRole = isA ? c.participantBRole : c.participantARole;
+            const lastMsg = c.lastMessage || '';
+            return (otherName && otherName.toLowerCase().includes(q)) ||
+                   (otherRole && otherRole.toLowerCase().includes(q)) ||
+                   lastMsg.toLowerCase().includes(q);
+        });
+    }, [conversations, convoSearch, userId]);
+
+    // Start or open a separate 1-on-1 conversation
     async function startConversation(contact) {
         setLoading(true);
         try {
-            const convo = await getOrCreateConversation(userId, contact.id, contact.name);
+            const convo = await getOrCreateConversation(user, contact);
             setActiveConvo(convo);
             setShowNewConvo(false);
             setContactSearch('');
@@ -162,51 +207,70 @@ export default function Messages() {
         }
     }
 
-    // Send message
+    // Send a message in the active conversation
     async function handleSend(e) {
         e.preventDefault();
-        if (!newText.trim() || !activeConvo) return;
+        if (!newText.trim() || !activeConvo || sending) return;
 
         const convoId = activeConvo._id || activeConvo.id;
+        const text = newText.trim();
+        setNewText('');
+        setSending(true);
+
         try {
             await sendMessage({
                 conversationId: convoId,
                 senderId: userId,
-                senderName: user?.organization || 'You',
-                text: newText.trim(),
+                senderName: userName,
+                text,
                 category: newCategory,
                 relatedShipment: null,
             });
 
-            setNewText('');
-            // Immediately reload messages and conversations to show the sent message
+            // Immediately fetch latest messages & conversation preview
             const msgs = await getMessages(convoId);
             setMessages(msgs);
             await loadConversations();
-            setTimeout(() => scrollToBottom('smooth'), 60);
+            setTimeout(() => scrollToBottom('smooth'), 50);
         } catch (err) {
             console.error('Failed to send message:', err);
+        } finally {
+            setSending(false);
         }
     }
 
-    // Filtered contacts for new conversation
-    const filteredContacts = contactDirectory.filter(c => {
-        if (c.id === userId) return false;
-        if (!contactSearch) return true;
-        return c.name.toLowerCase().includes(contactSearch.toLowerCase()) ||
-            c.role.toLowerCase().includes(contactSearch.toLowerCase());
+    // Filter contacts for New Conversation dialog (exclude self)
+    const allDirectoryContacts = getContactDirectory().filter(c => c.id !== userId);
+    const filteredContacts = allDirectoryContacts.filter(c => {
+        if (!contactSearch.trim()) return true;
+        const q = contactSearch.toLowerCase();
+        return c.name.toLowerCase().includes(q) ||
+               (c.role && c.role.toLowerCase().includes(q)) ||
+               (c.port && c.port.toLowerCase().includes(q));
     });
 
-    // Helper: get conversation ID (works with both _id and id)
-    const getConvoId = (c) => c?._id || c?.id;
+    // Helper to extract active partner details
+    const activeIsA = activeConvo?.participantA === userId;
+    const activePartnerId = activeIsA ? activeConvo?.participantB : activeConvo?.participantA;
+    const activePartnerContact = findContact(activePartnerId);
+    const activePartnerName = activeIsA
+        ? (activeConvo?.participantBName || activePartnerContact?.name || activePartnerId)
+        : (activeConvo?.participantAName || activePartnerContact?.name || activePartnerId);
+    const activePartnerRole = activeIsA
+        ? (activeConvo?.participantBRole || (activePartnerContact ? `${activePartnerContact.role} · ${activePartnerContact.port}` : ''))
+        : (activeConvo?.participantARole || (activePartnerContact ? `${activePartnerContact.role} · ${activePartnerContact.port}` : ''));
+    const activePartnerAvatar = activeIsA
+        ? (activeConvo?.participantBAvatar || activePartnerContact?.avatar || (activePartnerId || '??').slice(0, 2).toUpperCase())
+        : (activeConvo?.participantAAvatar || activePartnerContact?.avatar || (activePartnerId || '??').slice(0, 2).toUpperCase());
 
     return (
         <div className="messages-page">
+            {/* Top row: Reference tables */}
             <div className="messages-grid">
-                {/* Message Types Panel */}
+                {/* Message Types Reference Panel */}
                 <div className="dash-card msg-panel">
                     <div className="card-header">
-                        <h3>Marine & Customs Messages</h3>
+                        <h3>Marine & Customs Message Types</h3>
                         <div className="filter-tabs mini">
                             {['all', 'marine', 'customs'].map(t => (
                                 <button
@@ -249,13 +313,13 @@ export default function Messages() {
                     </div>
                 </div>
 
-                {/* Message Exchange Log */}
+                {/* Exchange Log */}
                 <div className="dash-card log-panel">
                     <div className="card-header">
                         <h3>Exchange Log</h3>
                         <span className="badge-live">
                             <span className="live-dot"></span>
-                            Live
+                            Live Feed
                         </span>
                     </div>
                     <div className="msg-log">
@@ -283,61 +347,113 @@ export default function Messages() {
                 </div>
             </div>
 
-            {/* ═══ Inter-Party Messaging ═══ */}
+            {/* ═══ Inter-Party Direct Trade Messaging ═══ */}
             <div className="dash-card chat-section">
-                <div className="card-header">
-                    <h3>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ verticalAlign: 'text-bottom', marginRight: '8px' }}>
-                            <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
-                        </svg>
-                        Trade Messaging
-                    </h3>
-                    <button className="btn-new-convo" onClick={() => setShowNewConvo(!showNewConvo)}>
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
-                            <path d="M12 5v14m-7-7h14" />
-                        </svg>
-                        New Conversation
-                    </button>
+                <div className="card-header chat-section-header">
+                    <div className="chat-title-group">
+                        <h3>
+                            <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" style={{ verticalAlign: 'text-bottom', marginRight: '8px' }}>
+                                <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
+                            </svg>
+                            Direct Trade Messaging
+                        </h3>
+                        <span className="current-user-tag">
+                            👤 Logged in as: <strong>{userName}</strong> ({user?.role || 'Stakeholder'})
+                        </span>
+                    </div>
+
+                    <div className="chat-actions">
+                        <button className="btn-new-convo" onClick={() => setShowNewConvo(true)}>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                <path d="M12 5v14m-7-7h14" />
+                            </svg>
+                            New Chat
+                        </button>
+                    </div>
                 </div>
 
                 <div className="chat-container">
-                    {/* Conversations sidebar */}
+                    {/* Conversations Sidebar */}
                     <div className="convo-sidebar">
                         <div className="convo-sidebar-header">
-                            <span className="convo-count">{conversations.length} conversation{conversations.length !== 1 ? 's' : ''}</span>
+                            <span className="convo-count">
+                                {conversations.length} Chat{conversations.length !== 1 ? 's' : ''}
+                            </span>
                         </div>
-                        {conversations.length === 0 ? (
+
+                        {/* Search in conversations */}
+                        <div className="convo-search-wrap">
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+                            </svg>
+                            <input
+                                type="text"
+                                placeholder="Search chats..."
+                                value={convoSearch}
+                                onChange={e => setConvoSearch(e.target.value)}
+                            />
+                        </div>
+
+                        {filteredConversations.length === 0 ? (
                             <div className="convo-empty">
                                 <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" strokeWidth="1.5" strokeLinecap="round">
                                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                                 </svg>
-                                <p>No conversations yet</p>
-                                <span>Start one to exchange trade info</span>
+                                <p>{conversations.length === 0 ? 'No conversations yet' : 'No matching chats'}</p>
+                                <span>{conversations.length === 0 ? 'Start a private chat with any corridor partner' : 'Try a different search term'}</span>
+                                {conversations.length === 0 && (
+                                    <button className="btn-empty-start" onClick={() => setShowNewConvo(true)}>
+                                        Start First Chat
+                                    </button>
+                                )}
                             </div>
                         ) : (
                             <div className="convo-list">
-                                {conversations.map(c => {
-                                    const otherName = c.participantA === userId
-                                        ? c.contactName
-                                        : (contactDirectory.find(cd => cd.id === c.participantA)?.name || 'Unknown');
-                                    const otherAvatar = contactDirectory.find(cd =>
-                                        cd.id === (c.participantA === userId ? c.participantB : c.participantA)
-                                    )?.avatar || '??';
+                                {filteredConversations.map(c => {
+                                    const isA = c.participantA === userId;
+                                    const partnerId = isA ? c.participantB : c.participantA;
+                                    const partnerContact = findContact(partnerId);
+                                    const partnerName = isA
+                                        ? (c.participantBName || partnerContact?.name || partnerId)
+                                        : (c.participantAName || partnerContact?.name || partnerId);
+                                    const partnerAvatar = isA
+                                        ? (c.participantBAvatar || partnerContact?.avatar || (partnerId || '??').slice(0, 2).toUpperCase())
+                                        : (c.participantAAvatar || partnerContact?.avatar || (partnerId || '??').slice(0, 2).toUpperCase());
+                                    const partnerRole = isA
+                                        ? (c.participantBRole || partnerContact?.role || '')
+                                        : (c.participantARole || partnerContact?.role || '');
+
+                                    const isMineLast = c.lastSenderId === userId;
+                                    const prefix = isMineLast ? 'You: ' : '';
+                                    const active = getConvoId(activeConvo) === getConvoId(c);
 
                                     return (
                                         <div
                                             key={getConvoId(c)}
-                                            className={`convo-item ${getConvoId(activeConvo) === getConvoId(c) ? 'active' : ''}`}
-                                            onClick={() => setActiveConvo(c)}
+                                            className={`convo-item ${active ? 'active' : ''}`}
+                                            onClick={() => {
+                                                setActiveConvo(c);
+                                                setShowNewConvo(false);
+                                            }}
                                         >
-                                            <div className="convo-avatar">{otherAvatar}</div>
-                                            <div className="convo-info">
-                                                <span className="convo-name">{otherName}</span>
-                                                <span className="convo-preview">{c.lastMessage || 'No messages yet'}</span>
+                                            <div className="convo-avatar-wrap">
+                                                <div className="convo-avatar">{partnerAvatar}</div>
+                                                <span className="online-dot" />
                                             </div>
-                                            {c.lastMessageAt && (
-                                                <span className="convo-time">{c.lastMessageAt.split(' ')[1]?.slice(0, 5)}</span>
-                                            )}
+                                            <div className="convo-info">
+                                                <div className="convo-top-row">
+                                                    <span className="convo-name">{partnerName}</span>
+                                                    {c.lastMessageAt && (
+                                                        <span className="convo-time">
+                                                            {c.lastMessageAt.split(' ')[1]?.slice(0, 5) || c.lastMessageAt.slice(11, 16)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                                <span className="convo-role-sub">{partnerRole}</span>
+                                                <span className="convo-preview">
+                                                    {c.lastMessage ? `${prefix}${c.lastMessage}` : 'No messages yet'}
+                                                </span>
+                                            </div>
                                         </div>
                                     );
                                 })}
@@ -345,38 +461,43 @@ export default function Messages() {
                         )}
                     </div>
 
-                    {/* Chat area */}
+                    {/* Chat Area */}
                     <div className="chat-area">
-                        {/* Loading overlay */}
                         {loading && (
-                            <div className="chat-placeholder">
-                                <p>Loading…</p>
+                            <div className="chat-loading-overlay">
+                                <span className="btn-spinner" />
+                                <p>Loading conversation…</p>
                             </div>
                         )}
 
-                        {/* New conversation picker overlay */}
+                        {/* New Conversation Modal Overlay */}
                         {showNewConvo && (
                             <div className="new-convo-overlay">
                                 <div className="new-convo-header">
-                                    <h4>Start New Conversation</h4>
+                                    <div>
+                                        <h4>Start New Private Chat</h4>
+                                        <p className="new-convo-sub">Choose any corridor stakeholder to open a separate 1-on-1 thread</p>
+                                    </div>
                                     <button className="slideover-close" onClick={() => { setShowNewConvo(false); setContactSearch(''); }}>
                                         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                                             <path d="M18 6L6 18M6 6l12 12" />
                                         </svg>
                                     </button>
                                 </div>
+
                                 <div className="new-convo-search">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                         <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
                                     </svg>
                                     <input
                                         type="text"
-                                        placeholder="Search organisations…"
+                                        placeholder="Search by name, role, port..."
                                         value={contactSearch}
                                         onChange={e => setContactSearch(e.target.value)}
                                         autoFocus
                                     />
                                 </div>
+
                                 <div className="contact-list">
                                     {filteredContacts.map(c => (
                                         <div
@@ -389,57 +510,72 @@ export default function Messages() {
                                                 <span className="contact-name">{c.name}</span>
                                                 <span className="contact-role">{c.role} · {c.port}</span>
                                             </div>
+                                            <span className="contact-action-tag">Message →</span>
                                         </div>
                                     ))}
                                     {filteredContacts.length === 0 && (
-                                        <p className="contact-empty">No matching contacts</p>
+                                        <div className="contact-empty">
+                                            <p>No matching corridor contacts found</p>
+                                            <span>Try searching for 'Customs', 'Port', 'Maersk', 'Tata', etc.</span>
+                                        </div>
                                     )}
                                 </div>
                             </div>
                         )}
 
-                        {/* No conversation selected */}
+                        {/* No conversation selected state */}
                         {!activeConvo && !showNewConvo && !loading && (
                             <div className="chat-placeholder">
-                                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="var(--border)" strokeWidth="1.2" strokeLinecap="round">
+                                <svg width="52" height="52" viewBox="0 0 24 24" fill="none" stroke="var(--border)" strokeWidth="1.2" strokeLinecap="round">
                                     <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z" />
                                 </svg>
-                                <h4>Select a conversation</h4>
-                                <p>Choose from existing conversations or start a new one to exchange trade information with other parties.</p>
+                                <h4>Select a Conversation</h4>
+                                <p>Select an existing chat from the left or click "New Chat" to connect with any corridor stakeholder.</p>
+                                <button className="btn-new-convo" onClick={() => setShowNewConvo(true)}>
+                                    + Start New Chat
+                                </button>
                             </div>
                         )}
 
-                        {/* Active conversation */}
-                        {activeConvo && !showNewConvo && !loading && (
+                        {/* Active Conversation */}
+                        {activeConvo && !showNewConvo && (
                             <>
-                                {/* Chat header */}
+                                {/* Chat Header */}
                                 <div className="chat-header">
                                     <div className="chat-header-info">
-                                        <div className="convo-avatar small">
-                                            {contactDirectory.find(cd =>
-                                                cd.id === (activeConvo.participantA === userId ? activeConvo.participantB : activeConvo.participantA)
-                                            )?.avatar || '??'}
+                                        <div className="convo-avatar-wrap">
+                                            <div className="convo-avatar small">
+                                                {activePartnerAvatar}
+                                            </div>
+                                            <span className="online-dot" />
                                         </div>
                                         <div>
                                             <span className="chat-header-name">
-                                                {activeConvo.participantA === userId
-                                                    ? activeConvo.contactName
-                                                    : (contactDirectory.find(cd => cd.id === activeConvo.participantA)?.name || 'Unknown')}
+                                                {activePartnerName}
                                             </span>
-                                            <span className="chat-header-role">
-                                                {contactDirectory.find(cd =>
-                                                    cd.id === (activeConvo.participantA === userId ? activeConvo.participantB : activeConvo.participantA)
-                                                )?.role || ''}
-                                            </span>
+                                            <div className="chat-header-sub">
+                                                <span className="chat-header-role">{activePartnerRole}</span>
+                                                <span className="chat-header-badge">Online · Direct Chat</span>
+                                            </div>
                                         </div>
+                                    </div>
+
+                                    <div className="chat-header-actions">
+                                        <span className="chat-security-tag">
+                                            🔒 End-to-End Trade Corridor Encryption
+                                        </span>
                                     </div>
                                 </div>
 
-                                {/* Messages */}
+                                {/* Messages Stream */}
                                 <div className="chat-messages" ref={chatMessagesRef}>
                                     {messages.length === 0 ? (
                                         <div className="chat-no-messages">
-                                            <p>No messages yet — start the conversation!</p>
+                                            <div className="empty-chat-hero">
+                                                <div className="empty-chat-icon">💬</div>
+                                                <h4>No messages yet</h4>
+                                                <p>Send a message to <strong>{activePartnerName}</strong> to start exchanging trade intelligence, documentation, or customs queries.</p>
+                                            </div>
                                         </div>
                                     ) : (
                                         messages.map(m => {
@@ -448,13 +584,18 @@ export default function Messages() {
                                             return (
                                                 <div key={msgKey} className={`chat-bubble-wrap ${isMine ? 'mine' : 'theirs'}`}>
                                                     <div className={`chat-bubble ${isMine ? 'mine' : 'theirs'}`}>
-                                                        {!isMine && <span className="bubble-sender">{m.senderName}</span>}
+                                                        {!isMine && <span className="bubble-sender">{m.senderName || activePartnerName}</span>}
                                                         <p className="bubble-text">{m.text}</p>
                                                         <div className="bubble-meta">
-                                                            {m.category !== 'General' && (
+                                                            {m.category && m.category !== 'General' && (
                                                                 <span className="bubble-category">{m.category}</span>
                                                             )}
-                                                            <span className="bubble-time">{m.timestamp.split(' ')[1]?.slice(0, 5)}</span>
+                                                            <span className="bubble-time">
+                                                                {m.timestamp?.split(' ')[1]?.slice(0, 5) || m.timestamp?.slice(11, 16) || ''}
+                                                            </span>
+                                                            {isMine && (
+                                                                <span className="bubble-check" title="Delivered">✓✓</span>
+                                                            )}
                                                         </div>
                                                     </div>
                                                 </div>
@@ -463,34 +604,45 @@ export default function Messages() {
                                     )}
                                 </div>
 
-                                {/* Compose */}
+                                {/* Compose Bar */}
                                 <form className="chat-compose" onSubmit={handleSend}>
-                                    <select
-                                        className="compose-category"
-                                        value={newCategory}
-                                        onChange={e => setNewCategory(e.target.value)}
-                                        title="Message category"
-                                    >
-                                        {MESSAGE_CATEGORIES.map(c => (
-                                            <option key={c} value={c}>{c}</option>
-                                        ))}
-                                    </select>
+                                    <div className="compose-category-wrap">
+                                        <label htmlFor="msg-cat-select" className="sr-only">Category</label>
+                                        <select
+                                            id="msg-cat-select"
+                                            className="compose-category"
+                                            value={newCategory}
+                                            onChange={e => setNewCategory(e.target.value)}
+                                            title="Message category"
+                                        >
+                                            {MESSAGE_CATEGORIES.map(c => (
+                                                <option key={c} value={c}>{c}</option>
+                                            ))}
+                                        </select>
+                                    </div>
+
                                     <input
                                         type="text"
                                         className="compose-input"
-                                        placeholder="Type a message…"
+                                        placeholder={`Message ${activePartnerName}...`}
                                         value={newText}
                                         onChange={e => setNewText(e.target.value)}
+                                        disabled={sending}
                                     />
+
                                     <button
                                         type="submit"
                                         className="compose-send"
-                                        disabled={!newText.trim()}
-                                        title="Send message"
+                                        disabled={!newText.trim() || sending}
+                                        title="Send message (Enter)"
                                     >
-                                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                            <path d="M22 2L11 13m11-11l-7 20-4-9-9-4 20-7z" />
-                                        </svg>
+                                        {sending ? (
+                                            <span className="btn-spinner mini" />
+                                        ) : (
+                                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                                                <path d="M22 2L11 13m11-11l-7 20-4-9-9-4 20-7z" />
+                                            </svg>
+                                        )}
                                     </button>
                                 </form>
                             </>
@@ -526,4 +678,3 @@ export default function Messages() {
         </div>
     );
 }
-

@@ -75,10 +75,10 @@ export function fetchConversations(userId) {
 }
 
 /** Get or create a conversation between two users. */
-export function createConversation(currentUserId, contactId, contactName) {
+export function createConversation(currentUserId, contactId, contactName, extra = {}) {
     return request('/messages/conversations', {
         method: 'POST',
-        body: JSON.stringify({ currentUserId, contactId, contactName }),
+        body: JSON.stringify({ currentUserId, contactId, contactName, ...extra }),
     });
 }
 
